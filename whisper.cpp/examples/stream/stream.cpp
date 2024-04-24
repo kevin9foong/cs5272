@@ -5,6 +5,7 @@
 #include "common-sdl.h"
 #include "common.h"
 #include "whisper.h"
+#include "parser.h"
 
 #include <cassert>
 #include <cstdio>
@@ -12,7 +13,7 @@
 #include <thread>
 #include <vector>
 #include <fstream>
-
+#include <algorithm>
 
 // command-line parameters
 struct whisper_params {
@@ -131,7 +132,8 @@ int main(int argc, char ** argv) {
 
     const int n_new_line = !use_vad ? std::max(1, params.length_ms / params.step_ms - 1) : 1; // number of steps to print new line
 
-    params.no_timestamps  = !use_vad;
+    // params.no_timestamps  = !use_vad;
+    params.no_timestamps  = true; // dont need the timestamp
     params.no_context    |= use_vad;
     params.max_tokens     = 0;
 
@@ -272,19 +274,23 @@ int main(int argc, char ** argv) {
 
             pcmf32_old = pcmf32;
         } else {
+            // uses vad
             const auto t_now  = std::chrono::high_resolution_clock::now();
             const auto t_diff = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
 
+            // sleep until 2000ms (2s) of time elapsed
             if (t_diff < 2000) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
                 continue;
             }
 
+            // get past 2s of audio
             audio.get(2000, pcmf32_new);
 
+            // check last second for voice activity -> if yes, then get the last length_ms of audio
             if (::vad_simple(pcmf32_new, WHISPER_SAMPLE_RATE, 1000, params.vad_thold, params.freq_thold, false)) {
-                audio.get(params.length_ms, pcmf32);
+                audio.get(std::min(static_cast<long long>(params.length_ms), t_diff), pcmf32);
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
@@ -349,6 +355,7 @@ int main(int argc, char ** argv) {
 
                     if (params.no_timestamps) {
                         printf("%s", text);
+                        handleText(text);
                         fflush(stdout);
 
                         if (params.fname_out.length() > 0) {
